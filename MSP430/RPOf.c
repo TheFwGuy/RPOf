@@ -19,33 +19,36 @@
  *   P1.4  -> Shutdown confirmation (INPUT)
  *   P1.5  -> not used - input
  *   P1.6  -> Debug LED (OUTPUT)
- *   P1.7  -> not used - input
+ *   P1.7  -> Generic Debug  (OUTPUT)
  */
 #define     RPOF_PORT      P1OUT
-#define     MASK_CLEAN     0xFC   /* Filter out only outputs */
 #define     PB_MASK        0x18  /* 0001 1000 */
 
-#define		PORTIO			0x47	  /* I/O defines 
-												*  0 - input
-												*  1 - output
-												*  0100 0111
-												*/
+#define		PORTIO		0xC7		/*  I/O defines 
+											 *  0 - input
+											 *  1 - output
+											 *  1100 0111
+											 */
 
-#define		LED				BIT0
-#define		SHTDOUT			BIT1
-#define		RELAY				BIT2
-#define		PUSHBTN			BIT3
-#define		SHTDIN			BIT4
-#define		LED_DBG			BIT6
+#define		LED			BIT0
+#define		SHTDOUT		BIT1
+#define		RELAY			BIT2
+#define		PUSHBTN		BIT3
+#define		SHTDIN		BIT4
+#define		LED_DBG		BIT6
+#define		GEN_DBG		BIT7
 
 
-#define		IDLE				0
-#define		POWERON_START	1
-#define		POWERON			2
-#define		POWEROFF_START	3
-#define		POWEROFF			4
+#define		IDLE					0
+#define		POWERON_START		1
+#define		POWERON				2
+#define		POWEROFF_START		3
+#define		POWEROFF				4
 
-#define     TMRVALUE              160    /* Timer will generate a interrupt every .01 ms */
+#define     TMRVALUE          160    /* Timer will generate a interrupt every 10ms */
+#define		FLASHTIME			50000		/* Value to obtain .5 sec from the 10 ms timer */
+#define		SAFETIME				50000		/* Value to obtain .5 sec from the 10 ms timer */
+#define		TURNOFFTIME			100		/* 50 seconds (100) */
 
 #define		OFF				0
 #define 		ON 				1
@@ -64,7 +67,9 @@ void Relay();
 unsigned char stateMachine = IDLE;
 unsigned char LEDStatus    = OFF;
 unsigned char RelayStatus  = OFF;
-int timeFlash = 0;
+int TimeFlash              = 0;
+int SafetyTimer            = 0;
+int OFFTimer               = 0;
 
 int main(void)
 {
@@ -105,7 +110,7 @@ int main(void)
     */
    TACTL = TASSEL_2 + MC_1;    /* Uses SMCLK, count in up mode */
    TACCTL0 = CCIE;             /* Use TACCR0 to generate interrupt */
-   TACCR0 = TMRVALUE;          /* Approx .001 ms */
+   TACCR0 = TMRVALUE;          /* Approx .01 ms */
 
    /*  NORMAL MODE */
    TACCTL0 &= ~0x0080;         /* Disable Out0 */
@@ -152,15 +157,17 @@ int main(void)
 				if(buttonOnOff == OFF)	/* Wait for the release of the pushbutton */
 				{
 					stateMachine = POWEROFF;
+					OFFTimer = TURNOFFTIME;		/* Start turning OFF timer */
 //					RPOF_PORT &= ~LED_DBG;	/* Turn OFF debug LED */
 				}
 				break;
 
 			case POWEROFF:
-				if(readShutdownFeedback())
+				if(readShutdownFeedback() || OFFTimer == 0)
 				{
-					LEDStatus    = OFF;				/* Turn OFF pushbutton LED */
+					LEDStatus    = OFF;			/* Turn OFF pushbutton LED */
 					RelayStatus  = OFF;			/* Turn OFF Relay */
+					OFFTimer     = 0;				/* Stop turning OFF Timer */
 					stateMachine = IDLE;
 				}
 				break;
@@ -230,14 +237,14 @@ void LEDPower()
 			break;
 		
 		case FLASH:
-			if(timeFlash == 0)
+			if(TimeFlash == 0)
 			{
 				if(RPOF_PORT & LED)
 					RPOF_PORT &= ~LED;
 				else	
 					RPOF_PORT |= LED;
 				
-				timeFlash = 50000;
+				TimeFlash = FLASHTIME;
 			}
 			break;
 		
@@ -271,12 +278,29 @@ void Relay()
 }
 
 /*
- *  Timer interrupt - every .01
+ *  Timer interrupt - every .01 s (10 ms)
  */ 
 interrupt(TIMERA0_VECTOR) TIMERA0_ISR(void)
 {
-   if(timeFlash)
-		timeFlash--;
+	/* LED flash timer */
+   if(TimeFlash)
+		TimeFlash--;
+
+	/* Turning OFF everything timer */
+	
+	if(OFFTimer)
+	{
+		RPOF_PORT ^= BIT7;		/* Debug */
+		
+		if(SafetyTimer)
+			SafetyTimer--;
+		else
+		{
+			SafetyTimer = SAFETIME;
+			if(OFFTimer)
+				OFFTimer--;
+		}
+	}
 }
 
 
