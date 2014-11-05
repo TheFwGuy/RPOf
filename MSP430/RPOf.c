@@ -41,14 +41,16 @@
 
 #define		IDLE					0
 #define		POWERON_START		1
-#define		POWERON				2
-#define		POWEROFF_START		3
-#define		POWEROFF				4
+#define		POWERON_WAIT		2
+#define		POWERON				3
+#define		POWEROFF_START		4
+#define		POWEROFF				5
 
 #define     TMRVALUE          160    /* Timer will generate a interrupt every 10ms */
 #define		FLASHTIME			50000		/* Value to obtain .5 sec from the 10 ms timer */
 #define		SAFETIME				50000		/* Value to obtain .5 sec from the 10 ms timer */
 #define		TURNOFFTIME			100		/* 50 seconds (100) */
+#define		SAFETY_START_TIME 200		/* 100 seconds (200) */
 
 #define		OFF				0
 #define 		ON 				1
@@ -57,7 +59,7 @@
  *  Functions prototypes
  */
 unsigned char readPushbutton();
-unsigned char readShutdownFeedback();
+unsigned char isRaspberryRunning();
 void LEDPower();
 void Relay();
  
@@ -101,9 +103,8 @@ int main(void)
     *  is not connected !!
     */
    P1DIR = PORTIO;              /* Set up port 1 for input and output */
+   P1SEL = 0;                   /* Set all I/O */
    P1OUT = 0;                   /* Force output to zero and input pins to 1 (for pull-up resistors) */
-//   P1REN = PB_MASK;             /* Set up pull up resistor for buttons !!!! WRONG Investigate */
-   P1SEL = 0;                   /* All I/O */
    
    /*
     *  Set Timer
@@ -137,18 +138,44 @@ int main(void)
 			case POWERON_START:
 				if(buttonOnOff == OFF)	/* Wait for the release of the pushbutton */
 				{
-					LEDStatus    = ON;			/* Turn ON pushbutton LED */
+					LEDStatus    = FLASH;		/* Turn FLASHING pushbutton LED */
 					RelayStatus  = ON;			/* Turn ON Relay */
-					stateMachine = POWERON;
+					OFFTimer     = SAFETY_START_TIME;	/* Start safety timer */
+					stateMachine = POWERON_WAIT;
 //					RPOF_PORT &= ~LED_DBG;	/* Turn OFF debug LED */
 				}
 				break;
 
+			case POWERON_WAIT:
+				if(OFFTimer == 0)
+				{
+					/* 
+					 *  Safety start timer expired !
+					 *  The Raspberry has not started ! Turned it OFF
+					 */
+					LEDStatus    = OFF;			/* Turn OFF pushbutton LED */
+					RelayStatus  = OFF;			/* Turn OFF Relay */
+					OFFTimer     = 0;				/* Stop safety timer */
+					RPOF_PORT    &= ~SHTDOUT;	/* Remove signal to start shutdown to Raspberry Pi */
+					stateMachine = IDLE;
+				} 
+				else if(isRaspberryRunning() )
+				{
+					/*
+					 *  Raspberry Pi started !
+					 */
+					OFFTimer     = 0;				/* Stop safety timer */
+					LEDStatus    = ON;			
+					stateMachine = POWERON;
+//					RPOF_PORT |= LED_DBG;	/* Turn ON debug LED */
+				}
+				break;
+				
 			case POWERON:
 				if(buttonOnOff == ON)
 				{
 					stateMachine = POWEROFF_START;
-					LEDStatus    = FLASH;
+					LEDStatus    = FLASH;			
 //					RPOF_PORT |= LED_DBG;	/* Turn ON debug LED */
 				}
 				break;
@@ -157,17 +184,21 @@ int main(void)
 				if(buttonOnOff == OFF)	/* Wait for the release of the pushbutton */
 				{
 					stateMachine = POWEROFF;
-					OFFTimer = TURNOFFTIME;		/* Start turning OFF timer */
+					RPOF_PORT    |= SHTDOUT;		/* Signal to start shutdown to Raspberry Pi */
+					OFFTimer     = TURNOFFTIME;	/* Start turning OFF timer */
+					
 //					RPOF_PORT &= ~LED_DBG;	/* Turn OFF debug LED */
 				}
 				break;
 
 			case POWEROFF:
-				if(readShutdownFeedback() || OFFTimer == 0)
+				if(!isRaspberryRunning() || OFFTimer == 0)
 				{
 					LEDStatus    = OFF;			/* Turn OFF pushbutton LED */
 					RelayStatus  = OFF;			/* Turn OFF Relay */
 					OFFTimer     = 0;				/* Stop turning OFF Timer */
+					RPOF_PORT    &= ~SHTDOUT;	/* Remove signal to start shutdown to Raspberry Pi */
+
 					stateMachine = IDLE;
 				}
 				break;
@@ -181,17 +212,20 @@ int main(void)
 
 /*
  *  Read pushbutton
+ *  Pushbutton OFF - reading 1
+ *  Pushbutton ON  - reading 0
+ *
  *  Return 1 if the pushbutton is pressed, 0 otherwise
  */ 
 unsigned char readPushbutton()
 {
-	unsigned short index;
+	unsigned short count;
 	
 	if(!(P1IN & PUSHBTN))
 	{
-		for(index=0; index < 2000; index++);
+		for(count=0; count< 2000; count++);	/* Small delay */
 
-		if(!(P1IN & PUSHBTN))
+		if(!(P1IN & PUSHBTN)) /* Re-read */
 		{
 			return(ON);
 		}
@@ -202,17 +236,20 @@ unsigned char readPushbutton()
 
 /*
  *  Read shutdwon feedback
- *  Return 1 if the pushbutton is pressed, 0 otherwise
+ *  Raspberry Pi running - expect signal 1
+ *  Raspberry Pi after shutdown - expect signal 0
+ *
+ *  Return 1 if the Raspberry Pi is running - 0 otherwise
  */ 
-unsigned char readShutdownFeedback()
+unsigned char isRaspberryRunning()
 {
-	unsigned short index;
+	unsigned short count;
 	
-	if(!(P1IN & SHTDIN))
+	if(P1IN & SHTDIN)
 	{
-		for(index=0; index < 2000; index++);
+		for(count=0; count< 2000; count++);	/* Small delay */
 
-		if(!(P1IN & SHTDIN))
+		if(P1IN & SHTDIN)	/* Re-read */
 		{
 			return(ON);
 		}
@@ -226,6 +263,13 @@ unsigned char readShutdownFeedback()
  */ 
 void LEDPower()
 {
+   static unsigned char shadowLEDStatus = 0xFF;
+	
+	/* Write on the port only if there is a change in the status */
+
+	if(shadowLEDStatus == LEDStatus && TimeFlash)
+		return;
+	
    switch(LEDStatus)
 	{
 		case ON:
@@ -239,11 +283,7 @@ void LEDPower()
 		case FLASH:
 			if(TimeFlash == 0)
 			{
-				if(RPOF_PORT & LED)
-					RPOF_PORT &= ~LED;
-				else	
-					RPOF_PORT |= LED;
-				
+				RPOF_PORT ^= LED;
 				TimeFlash = FLASHTIME;
 			}
 			break;
@@ -252,6 +292,8 @@ void LEDPower()
 			LEDStatus = OFF;
 			break;
 	}
+	
+	shadowLEDStatus = LEDStatus;
 }
 
 /*
@@ -259,6 +301,13 @@ void LEDPower()
  */ 
 void Relay()
 {
+   static unsigned char shadowRelayStatus = 0xFF;
+	
+	/* Write on the port only if there is a change in the status */
+
+	if(shadowRelayStatus == RelayStatus)
+		return;
+	
    switch(RelayStatus)
 	{
 		case ON:
@@ -275,6 +324,7 @@ void Relay()
 			RelayStatus = OFF;
 			break;
 	}
+	shadowRelayStatus = RelayStatus;
 }
 
 /*
@@ -290,7 +340,7 @@ interrupt(TIMERA0_VECTOR) TIMERA0_ISR(void)
 	
 	if(OFFTimer)
 	{
-		RPOF_PORT ^= BIT7;		/* Debug */
+//		RPOF_PORT ^= BIT7;		/* Debug */
 		
 		if(SafetyTimer)
 			SafetyTimer--;
