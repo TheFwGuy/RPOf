@@ -6,13 +6,14 @@ This directory contains the  code for a Raspberry Pi On/Off button
 
 Use make to compile it. 
 
-make clean	-> clean project
-make			-> compile code
+make clean   -> clean project
+make         -> compile code
 
 To debug, use the mspdebug utility
 - sudo mspdebug rf2500
 
-When in the program, to load the program in the memory : prog test.elf
+When in the program, to load the program in the memory : prog RPOf.elf
 
 Ctrl-D to exit
 
+-------------------------------------------
