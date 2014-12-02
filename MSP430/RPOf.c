@@ -38,18 +38,19 @@
 #define		LED_DBG		BIT6
 #define		GEN_DBG		BIT7
 
-
 #define		IDLE					0
 #define		POWERON_START		1
 #define		POWERON_WAIT		2
 #define		POWERON				3
 #define		POWEROFF_START		4
-#define		POWEROFF				5
+#define		POWEROFF_WAIT		5
+#define		POWEROFF				6
 
-#define     TMRVALUE          160    /* Timer will generate a interrupt every 10ms */
+#define     TMRVALUE          160    	/* Timer will generate a interrupt every 10ms */
 #define		FLASHTIME			50000		/* Value to obtain .5 sec from the 10 ms timer */
-#define		SAFETIME				50000		/* Value to obtain .5 sec from the 10 ms timer */
-#define		TURNOFFTIME			100		/* 50 seconds (100) */
+#define		PRESCALER			50000		/* Value to obtain .5 sec from the 10 ms timer */
+#define		TURN_OFF_TIME		8			/* 4 seconds (8) */
+#define		SAFETY_STOP_TIME	200		/* 100 seconds (200) */
 #define		SAFETY_START_TIME 200		/* 100 seconds (200) */
 
 #define		OFF				0
@@ -61,16 +62,17 @@
 unsigned char readPushbutton();
 unsigned char isRaspberryRunning();
 void LEDPower();
+void powerRaspiOff();
 void Relay();
  
 /*
  *  Global variables
  */
-unsigned char stateMachine = IDLE;
+unsigned char StateMachine = IDLE;
 unsigned char LEDStatus    = OFF;
 unsigned char RelayStatus  = OFF;
 int TimeFlash              = 0;
-int SafetyTimer            = 0;
+int PrescalerTime          = 0;
 int OFFTimer               = 0;
 
 int main(void)
@@ -125,12 +127,12 @@ int main(void)
 		Relay();									/* Handle Relay */
 		buttonOnOff = readPushbutton();	/* Read pushbutton */
 
-		switch(stateMachine)
+		switch(StateMachine)
 		{
 			case IDLE:
 				if(buttonOnOff == ON)
 				{
-					stateMachine = POWERON_START;
+					StateMachine = POWERON_START;
 //					RPOF_PORT |= LED_DBG;	/* Turn ON debug LED */
 				}
 				break;
@@ -141,7 +143,8 @@ int main(void)
 					LEDStatus    = FLASH;		/* Turn FLASHING pushbutton LED */
 					RelayStatus  = ON;			/* Turn ON Relay */
 					OFFTimer     = SAFETY_START_TIME;	/* Start safety timer */
-					stateMachine = POWERON_WAIT;
+
+					StateMachine = POWERON_WAIT;
 //					RPOF_PORT &= ~LED_DBG;	/* Turn OFF debug LED */
 				}
 				break;
@@ -153,20 +156,17 @@ int main(void)
 					 *  Safety start timer expired !
 					 *  The Raspberry has not started ! Turned it OFF
 					 */
-					LEDStatus    = OFF;			/* Turn OFF pushbutton LED */
-					RelayStatus  = OFF;			/* Turn OFF Relay */
-					OFFTimer     = 0;				/* Stop safety timer */
-					RPOF_PORT    &= ~SHTDOUT;	/* Remove signal to start shutdown to Raspberry Pi */
-					stateMachine = IDLE;
+					powerRaspiOff();
+					StateMachine = IDLE;
 				} 
 				else if(isRaspberryRunning() )
 				{
 					/*
 					 *  Raspberry Pi started !
 					 */
-					OFFTimer     = 0;				/* Stop safety timer */
+					OFFTimer     = 0;				/* Stop timer */
 					LEDStatus    = ON;			
-					stateMachine = POWERON;
+					StateMachine = POWERON;
 //					RPOF_PORT |= LED_DBG;	/* Turn ON debug LED */
 				}
 				break;
@@ -174,8 +174,7 @@ int main(void)
 			case POWERON:
 				if(buttonOnOff == ON)
 				{
-					stateMachine = POWEROFF_START;
-					LEDStatus    = FLASH;			
+					StateMachine = POWEROFF_START;
 //					RPOF_PORT |= LED_DBG;	/* Turn ON debug LED */
 				}
 				break;
@@ -183,28 +182,49 @@ int main(void)
 			case POWEROFF_START:
 				if(buttonOnOff == OFF)	/* Wait for the release of the pushbutton */
 				{
-					stateMachine = POWEROFF;
+					LEDStatus    = FLASH;			
 					RPOF_PORT    |= SHTDOUT;		/* Signal to start shutdown to Raspberry Pi */
-					OFFTimer     = TURNOFFTIME;	/* Start turning OFF timer */
+					OFFTimer     = SAFETY_STOP_TIME;	/* Start safety OFF timer */
 					
+					StateMachine = POWEROFF_WAIT;
 //					RPOF_PORT &= ~LED_DBG;	/* Turn OFF debug LED */
 				}
 				break;
 
-			case POWEROFF:
-				if(!isRaspberryRunning() || OFFTimer == 0)
+			case POWEROFF_WAIT:
+				/*
+			    *  Wait for safety timer expiration or signal indicating
+			    *  the end of the shutdown
+			    */
+				if(OFFTimer == 0)
 				{
-					LEDStatus    = OFF;			/* Turn OFF pushbutton LED */
-					RelayStatus  = OFF;			/* Turn OFF Relay */
-					OFFTimer     = 0;				/* Stop turning OFF Timer */
-					RPOF_PORT    &= ~SHTDOUT;	/* Remove signal to start shutdown to Raspberry Pi */
-
-					stateMachine = IDLE;
+					powerRaspiOff();
+					StateMachine = IDLE;
+				}
+				else if(!isRaspberryRunning())
+				{
+				   /*
+					 *  Raspberry Pi shutdown completed !
+					 *  Wait few seconds before to remove the power
+					 */
+					OFFTimer     = TURN_OFF_TIME;	/* Start turning OFF timer */
+					StateMachine = POWEROFF;
 				}
 				break;
-			
+
+			case POWEROFF:
+				/*
+			    *  Wait for OFF timer expiration 
+			    */
+				if(OFFTimer == 0)
+				{
+					powerRaspiOff();
+					StateMachine = IDLE;
+				}
+				break;
+				
 			default:
-				stateMachine = IDLE;
+				StateMachine = IDLE;
 				break;
 		}
 	}
@@ -245,17 +265,17 @@ unsigned char isRaspberryRunning()
 {
 	unsigned short count;
 	
-	if(P1IN & SHTDIN)
+	if((P1IN & SHTDIN) == 0)
 	{
 		for(count=0; count< 2000; count++);	/* Small delay */
 
-		if(P1IN & SHTDIN)	/* Re-read */
+		if((P1IN & SHTDIN) == 0)	/* Re-read */
 		{
-			return(ON);
+			return(OFF);
 		}
 	}
 
-	return(OFF);
+	return(ON);
 }
 
 /*
@@ -312,12 +332,12 @@ void Relay()
 	{
 		case ON:
 			RPOF_PORT |= RELAY;
-			RPOF_PORT |= LED_DBG;	/* Turn ON debug LED */
+//			RPOF_PORT |= LED_DBG;	/* Turn ON debug LED */
 			break;
 
 		case OFF:
 			RPOF_PORT &= ~RELAY;
-			RPOF_PORT &= ~LED_DBG;	/* Turn ON debug LED */
+//			RPOF_PORT &= ~LED_DBG;	/* Turn ON debug LED */
 			break;
 			
 		default:
@@ -325,6 +345,17 @@ void Relay()
 			break;
 	}
 	shadowRelayStatus = RelayStatus;
+}
+
+/*
+ *  Power OFF the Raspberry Pi
+ */ 
+void powerRaspiOff()
+{
+	LEDStatus    = OFF;			/* Turn OFF pushbutton LED */
+	RelayStatus  = OFF;			/* Turn OFF Relay */
+	RPOF_PORT    &= ~SHTDOUT;	/* Remove signal to start shutdown to Raspberry Pi */
+	OFFTimer     = 0;				/* Stop Timer */
 }
 
 /*
@@ -340,13 +371,14 @@ interrupt(TIMERA0_VECTOR) TIMERA0_ISR(void)
 	
 	if(OFFTimer)
 	{
-//		RPOF_PORT ^= BIT7;		/* Debug */
+//		RPOF_PORT ^= GEN_DBG;		/* Debug */
 		
-		if(SafetyTimer)
-			SafetyTimer--;
+		if(PrescalerTime)
+			PrescalerTime--;
 		else
 		{
-			SafetyTimer = SAFETIME;
+			PrescalerTime = PRESCALER;
+
 			if(OFFTimer)
 				OFFTimer--;
 		}
