@@ -1,0 +1,37 @@
+[Eagle]
+Version="08 03 02"
+Platform="Windows"
+Globals="Globals"
+Desktop="Desktop"
+
+[Globals]
+AutoSaveProject=1
+UsedLibraryUrn="urn:adsk.eagle:library:102"
+UsedLibraryUrn="urn:adsk.eagle:library:368"
+UsedLibraryUrn="urn:adsk.eagle:library:529"
+UsedLibraryUrn="urn:adsk.eagle:library:515"
+UsedLibraryUrn="urn:adsk.eagle:library:513"
+UsedLibraryUrn="urn:adsk.eagle:library:511"
+UsedLibraryUrn="urn:adsk.eagle:library:512"
+UsedLibraryUrn="urn:adsk.eagle:library:514"
+UsedLibraryUrn="urn:adsk.eagle:library:521"
+UsedLibraryUrn="urn:adsk.eagle:library:522"
+UsedLibraryUrn="urn:adsk.eagle:library:523"
+UsedLibraryUrn="urn:adsk.eagle:library:420"
+UsedLibrary="C:/EAGLE 8.3.2/lbr/TI_MSP430_v12.lbr"
+UsedLibrary="C:/EAGLE 8.3.2/lbr/TI_MSP430_v16.lbr"
+UsedLibrary="C:/EAGLE 8.3.2/lbr/st-microelectronics.lbr"
+UsedLibrary="C:/EAGLE 8.3.2/lbr/steveb.lbr"
+UsedLibrary="C:/Users/stefa/Documents/git-repo/TeirmiLab/Hardware/EagleLibToAdd/rotary-encoder.lbr"
+UsedLibrary="C:/Users/stefa/Documents/git-repo/TeirmiLab/Hardware/EagleLibToAdd/dp_devices.lbr"
+UsedLibraryUrn="urn:adsk.eagle:library:530"
+
+[Win_1]
+Type="Control Panel"
+Loc="240 177 1439 816"
+State=0
+Number=0
+
+[Desktop]
+Screen="1920 1080"
+Window="Win_1"
